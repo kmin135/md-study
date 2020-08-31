@@ -184,3 +184,73 @@ MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.    346.8 avail Mem
 * CPU 경합이 일어나는 상황에서 우선순위가 높은수록 빨리 끝나게 됨. 물론 경합이 없는 경우 (CPU 수가 실행중인 프로세스보다 많다면 경합할 이유가 없음) 에는 우선순위가 영향을 주지 않을 수도 있음.
 * 실행중인 프로세스는 `renice` 명령을 통해 우선순위 조정 가능
 * PR 값이 RT (RealTime) 로 출력되는 프로세스들은 커널에서 사용하는 데몬들임. 이름 그대로 특정 시간안에 반드시 종료되어야 하는 중요 프로세스들에 부여되며 RT 스케줄러라는 별도의 스케줄러가 제어함. 당연히 다른 스케줄러보다 우선순위가 높음.
+
+
+
+## 3장 Load Average와 시스템 부하
+
+### Load Average의 정의
+
+*  1, 5, 15분 동안 실행 상태 또는 I/O 대기 중인 프로세스 수의 평균값
+*  Core 수는 고려되지 않으므로 같은 Load Average 라도 Core 수에 따라 해석해야함.
+
+
+
+### Load Average 보기
+
+* `uptime` 명령
+* strace로 확인해보면 단순히 `/proc/loadavg` 파일을 출력하는 것
+
+
+
+### 한계점과 vmstat
+
+* 시스템 부하의 기본척도이지만 이것만으로는 CPU에 부하가 걸린건지 I/O 병목에 따른 부하인지 확인이 어려움
+* `vmstat` 으로 실행중인 프로세스의 개수와 (`r 열`) I/O 대기중인 프로세스의 개수를 (`b열`) 구분해서 볼 수 있음.
+  * `vmstat 1` : 1초마다 갱신하여 출력
+
+
+
+### 파이썬 예제
+
+* cpu bound 
+
+```python
+#!/usr/bin/python
+test = 0
+while True:
+    test = test +1
+```
+
+* cpu bound (multithread)
+
+```python
+#!/usr/bin/python
+import threading
+
+def infinite():
+    test = 0
+    while True:
+        test = test + 1
+
+threads = []
+for i in range(10):
+    thread = threading.Thread(target=infinite, args=[])
+    thread.start()
+
+for thread in threads:
+    thread.join()
+```
+
+* I/O bound
+
+```python
+#!/usr/bin/python
+while True:
+    f = open('./io-test', 'w')
+    f.write('TEST')
+    f.close()
+```
+
+* /proc/sched_debug 파일의 nr_running, runnable tasks 항목에서는 각 CPU에 할당된 프로세스 수와 프로세스의 PID 등의 정보를 확인할 수 있다.
+
