@@ -429,3 +429,55 @@ int main() {
 
 ### TCP 통신 과정
 
+* TCP 연결 맺기 : 3 way handshake
+  * 연결을 맺고자 하는 측에서 먼저 SYN을 보냄
+
+![99087C405C18E3CD28](./imgs/DevOps와SE를위한리눅스커널이야기/99087C405C18E3CD28.png)
+
+
+
+* TCP 연결 끊기 : 4way handshake
+  * 연결을 끊고자 하는 측에서 먼저 FIN을 보냄
+  * 먼저 연결을 끊는 쪽을 active closer, 반대측을 passive closer 라고 함.
+
+![99229C485C1D90C038](imgs/DevOps와SE를위한리눅스커널이야기/99229C485C1D90C038.png)
+
+
+
+* 리눅스에서 80포트 tcp dump 만들기
+
+  * `tcpdump -A -vvv -nn port 80 -w server_dump.pcap`
+
+  * pcap은 wireshark 에서 바로 열어볼 수 있음
+
+  * `curl google.com` 로 80 포트로 패킷을 만들어보고 열어보자 (참고로 curl은 내가 먼저 연결을 끊는다 (내PC가 active closer))
+
+  * `telnet google.com 80` 으로 열고 아래 명령으로 해보면 구글서버가 먼저 끊는다. (구글서버가 active closer)
+
+    ```
+    GET / HTTP/1.1
+    Host:google.com
+    
+    ```
+
+    
+
+
+
+### TIME_WAIT 소켓의 문제점
+
+* 4 way handshake 과정 중 active closer 측에 TIME_WAIT 소켓이 생성됨. 상황에 따라 클라이언트 측에 생길 수도 있고 서버 측에 생길 수도 있음
+
+* TIME_WAIT 소켓 확인하기
+  * `netstat -anpo | grep -i time_wait`
+
+* TIME_WAIT 소켓이 많아질 때의 문제점
+  1. 로컬 포트 고갈에 따른 애플리케이션 타임아웃 발생
+     - `net.ipv4.ip_local_port_range` 파라미터로 외부와 통신하기 위해 필요한 로컬 포트의 범위를 지정하는데 이 범위의 값을 모두 사용하게 되면 로컬포트 할당이 불가능하게 되므로 외부와 통신을 못하게 되고 결과적으로 애플리케이션의 타임아웃으로 이어지게된다.
+  2. 잦은 TCP 연결 맺기/끊기로 인해 서비스의 응답 속도 저하가 발생할 수 있음
+
+
+
+### 클라이언트에서의 TIME_WAIT
+
+* HTTP 기반 서비스는 대부분 서버가 먼저 연결을 끊어서 서버에만 TIME_WAIT가 
