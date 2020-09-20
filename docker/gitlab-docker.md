@@ -13,12 +13,26 @@
 
 
 
-## 즉시 backup
+### 즉시 backup
 
 ```bash
 docker-compose rm -sf gitlab
 docker-compose run --rm gitlab app:rake gitlab:backup:create
 docker-compose up -d 
+```
+
+
+
+### backup파일 외부 이중백업
+
+* cron 활용
+
+```bash
+crontab -e
+
+# 매일 0시에 백업. 경로는 알맞게 조정해서 사용
+* 0 * * * cp ~/docker/gitlab/gitlab/backups/*.tar /mnt/d/Backups/gitlab/
+# ...
 ```
 
 

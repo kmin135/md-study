@@ -4,6 +4,20 @@
 
 
 
+# 초기세팅
+
+* alias 세팅
+
+```bash
+# wsl의 현재경로를 windows explorer에 띄움
+echo "alias open='explorer.exe .'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+
+
+
+
 # 자원사용제한
 
 * `%UserProfile%\.wslconfig` 추가
@@ -36,16 +50,6 @@ localhostForwarding=<bool> # Boolean specifying if ports bound to wildcard or lo
 
 
 
-# 재시작
-
-* powershell 관리자권한에서수행
-
-```
-Restart-Service LxssManager
-```
-
-
-
 # 명령어
 
 ```bash
@@ -59,10 +63,54 @@ wsl -t <NAME>
 
 
 
+### 재시작
+
+* powershell 관리자권한에서수행
+
+```
+Restart-Service LxssManager
+```
+
+
+
+
+
 # 서비스관리
 
-* `systemd` ,`update-rc.d` 등의 부팅시 서비스 자동 재시작같은게 안 먹힌다.
-* 대신 windows에서 wsl 명령어로 직접 vm에 명령을 보낼 수 있으므로 이점을 활용한다. (sudo 권한이 필요하다면 visudo에 등록)
+* `systemd` ,`update-rc.d` 등의 부팅시 서비스 자동 시작같은게 안 먹힌다.
+* 대신 windows에서 wsl 명령어로 직접 vm에 명령을 보낼 수 있으므로 이점을 활용한다. 
+
+
+
+### visudo 세팅
+
+* sudo를 비밀번호 없이 수행하도록 수정
+
+```bash
+# 에디터를 vim.basic으로 변경
+sudo update-alternatives --config editor
+```
+
+```diff
+- %sudo   ALL=(ALL:ALL) ALL
++ %sudo   ALL=(ALL:ALL) NOPASSWD:ALL
+```
+
+
+
+### windows 작업 스케줄러 세팅
+
+* 작업 스케줄러로 windows 로그인시 필요한 wsl 명령들을 수행하도록 함
+* 예를 들어 cron을 항상 시작시키고 싶다면 아래와 같이 한다.
+
+```
+작업 스케줄러 > 기본 작업 만들기
+
+트리거 : "로그인할 때"
+동작 : "프로그램 시작"
+- 프로그램/스크립트 : wsl
+- 인수 추가 : sudo service cron start
+```
 
 
 
