@@ -59,6 +59,8 @@ wsl --list
 wsl -l -v
 # 특정 가상 머신 종료
 wsl -t <NAME>
+# help
+wsl --help
 ```
 
 
