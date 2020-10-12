@@ -480,4 +480,57 @@ int main() {
 
 ### 클라이언트에서의 TIME_WAIT
 
-* HTTP 기반 서비스는 대부분 서버가 먼저 연결을 끊어서 서버에만 TIME_WAIT가 
+* HTTP 기반 서비스는 대부분 서버가 먼저 연결을 끊어서 서버에만 TIME_WAIT가 생긴다고 생각할 수 있으나 어디까지나 연결을 먼저 끊는 active closer 측에 생기는 것이므로 서버/클라이언트 여부는 중요하지 않음
+* TIME_WAIT 생성 테스트
+
+```bash
+curl http://google.com
+netstat -anpo | grep 80
+```
+
+```
+위의 curl을 많이 해보면 아래와 같이 TIME_WAIT 소켓이 늘어나게 된다.
+기본적으로 1분간 유지되는데 이 시간동안 net.ipv4.ip_local_port_range 범위 내의 포트를 모두 사용하게 되면 더 이상 소켓을 만들 수 없게된다.
+
+client:local_port1 google.com:80
+client:local_port2 google.com:80
+...
+client:local_portN google.com:80
+```
+
+
+
+#### 해결방법1 : net.ipv4.tcp_tw_reuse
+
+* 나갈 때 사용하는 로컬 포트에서 TIME_WAIT 상태의 소켓을 즉시 재사용할 수 있도록 함
+* 1로 설정하면 키는 것
+* net.ipv4.tcp_timestamps 값이 1이어야함.
+
+
+
+#### 해결방법2 : ConnectionPool
+
+* 커넥션풀을 사용해 무분별하게 소켓이 생성되는 것을 막아 근본적으로 TIME_WAIT 상태의 소켓이 만들어지는 것을 줄이는 방법. 소켓 생성/삭제가 줄어들기 때문에 서비스의 응답 속도 향상도 기대할 수 있음.
+
+
+
+### 서버 입장에서의 TIME_WAIT 소켓
+
+* nginx 에서 keepalive_timeout을 0으로 설정하고 올리고 클라이언트에서 curl을 날려보면 서버쪽이 먼저 연결을 끊기 때문에 서버쪽에 TIME_WAIT 소켓이 생긴다.
+
+
+
+#### 하면 안 되는 해결책 : net.ipv4.tcp_tw_recycle
+
+* 클라이언트측 해결책으로 쓰던 net.ipv4.tcp_tw_reuse 와 달리 서버 입장에서 TIME_WAIT 소켓을 빠르게 재사용할 수 있도록 해줌
+* 가장 마지막에 해당 소켓으로부터 들어온 timestamp 를 TIME_WAIT 소켓 정리에 사용한다. 즉 같은 클라이언트 IP에서는 timestamp가 증가할 것을 전제로 만들어져있다. 하지만 NAT IP 등의 환경에서는 동일 IP일지라도 서로 다른 클라이언트일 수 있고 이 경우 timestamp가 더 작은 값이 나중에 들어오는 것도 가능한데 이러면 tcp_tw_recycle이 켜진 경우 패킷을 드랍시켜버린다. 그러므로 실제 운영환경에서 tcp_tw_recylce 옵션은 절대로 사용해서는 안 된다.
+* (내가 확인) ubuntu20.04 기준으로 해당 파라미터는 아예 없었다. 이런 문제로 deprecated 된걸까..
+* 1로 설정하면 키는 것
+
+
+
+#### 해결책 : keepalive 사용하기
+
+* keepalive란 한 번 맺은 세션을 요청히 끝나도 일정시간 유지해주는 기능
+* keepalive 기능을 통해 생성된 소켓이 오랫동안 유지되도록 함으로써 TIME_WAIT 소켓을 줄일 수 있다. 불필요한 TCP 연결 맺기/끊기 과정이 줄어드므로 응답 속도 향상도 기대할 수 있다.
+* ex) nginx에서 keepalive를 30초로 설정하고 telnet으로 요청테스트를 해보면 마지막 요청으로부터 30초 후 끊긴다. 즉, 최초 연결 후 30초가 아니라 마지막 통신 후 30초.
