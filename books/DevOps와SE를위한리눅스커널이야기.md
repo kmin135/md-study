@@ -554,3 +554,73 @@ client:local_portN google.com:80
 
 ## 8장 TCP Keepalive를 이용한 세션 유지
 
+### TCP Keepalive란?
+
+* 통신할 때마다 매번 3-way handshake 를 진행하는 것은 낭비이므로 통신이 계속되는 상황이라면 처음 만든 세션을 계속 사용하도록 하는 기능
+* 동작원리1 : 3-way handshake로 연결을 맺고 최초 의도했던 요청/응답을 주고받은 뒤 바로 끊지 않고 keepalive 를 위한 패킷을 하나 보내고 받은 측은 ack을 보내어 세션을 유지한다. (서버와 클라이언트 중 어느쪽이든 이 기능을 사용하면 세션은 유지됨)
+* 동작확인 : netstat 으로 확인했을 때 마지막 열에 keepalive timer가 표시된다. 
+
+```bash
+# 아래는 ssh 연결로 확인한것. sshd 데몬이 사용하는 소켓에 keepalive 옵션이 켜져있음을 알 수 있다.
+
+kwon@DESKTOP-0U32D8C:~/md-study$ sudo netstat -anpo | grep 2222
+tcp        0      0 172.20.2.11:33684       192.168.1.194:2222      ESTABLISHED 2026/ssh             keepalive (7168.51/0/0)
+```
+
+* 동작원리2 : keepalive timer가 다 되면 연결이 살아있는지 확인하는 작은 패킷을 보낸다.
+* 사용방법1 : 소켓을 생성할 때 소켓 옵션을 설정해야됨. setsockopt() 라는 함수를 사용하며 옵션 중에 SO_KEEPALIVE 를 사용하면 keepalive를 사용하는 것
+* 사용방법2 : 소켓을 직접 만들 때 그렇다는거고 보통 애플리케이션이 제공하는 tcp keepalive 옵션을 켜면된다.
+
+
+
+### TCP Keepalive 파라미터
+
+* 커널 파라미터는 3개
+* net.ipv4.tcp_keepalive_time : keepalive 소켓의 유지 시간. 애플리케이션에서 세팅할 경우에는 그 값이 우선이고 그런 설정이 없을 때 커널 파라미터 값이 사용됨 
+* net.ipv4.tcp_keepalive_probes : keepalive 패킷을 보낼 최대 전송 횟수. keepalive 패킷 전달 자체가 실패할 수 있으므로 그에 대비한 값임.
+* net.ipv4.tcp_keepalive_intvl : probes와 함께 keepalive 패킷 전달이 실패할 경우의 재전송을 위한 값. 최초 keepalive_time 초 동안 기다린 후 keepalive 확인 패킷을 보내고 최초 패킷에 대한 응답이 돌아오지 않으면 keepalive_intvl 간격으로 keepalive_probes 번의 패킷을 더 보냄. 그 후에도 응답이 안 오면 연결을 끊음.
+* 두 종단 간의 연결을 끊기 위해서는 FIN 패킷이 필요함. 하지만 실제 운영환경에서는 FIN을 주고 받지 못하고 끊어지는 상황이 있을 수 있음. 예를 들면 서버가 연결되어 있는 스위치에 장애가 생기면 두 종단 간 연결이 끊어진 것이지만 FIN을 전달할 방법이 없어 계속해서 연결된 것처럼 남아있게 됨. 이 때 keepalive를 사용한 소켓의 경우 재전송 절차를 밟은뒤에 그래도 응답이 없으면 커널이 해당 소켓을 정리함.
+
+
+
+### TCP Keepalive와 좀비 커넥션
+
+* keepalive의 첫번째 기능은 두 종단 간의 연결을 유지함으로써 불필요한 tcp handshake를 줄여 전체적인 서비스 품질을 높이는 것.
+* 더 중요한 두번째 기능은 좀비 커넥션 (잘못된 커넥션 유지) 이라 부르는 소켓을 방지하는 기능
+* 애플리케이션레벨에서 직접 keepalive를 관리할 수도 있겠으나 커널에서 제공하는 기능만으로도 좀비 커넥션을 관리할 수 있음
+
+
+
+### TCP Keepalive와 HTTP Keepalive
+
+* apache나 nginx 에도 keepalive timeout 옵션이 있는데 차이점은 무엇일까
+* 최대 유지 시간1 : 만약 둘다 60초로 설정한다면
+  * TCP Keepalive : 60초 간격으로 연결이 유지되는지 확인하고 응답을 받았으면 계쏙 연결을 유지함
+  * HTTP Keepalive : 60초 동안 소켓을 유지하고 60초가 지난 후에도 요청이 없다면 연결을 끊음
+* 최대 유지 시간2 : TCP Keepalive는 30초, Apache Keepalive는 60초
+  * netstat 으로 확인해보면 keepalive 타이머는 30초로 설정된다. 2번 타이머가 돌아 60초가 되면 apache 설정에 따라 서버가 먼저 클라이언트와의 연결을 종료한다.
+* 최대 유지 시간3 : TCP Keepalive는 120초, Apache Keepalive는 60초
+  * keepalive 타이머는 120초로 설정되지만 60초가 되면 apache가 먼저 소켓을 정리해버린다.
+* 결국 keepalive 패킷 전송은 tcp keepalive 옵션을 따르지만 실제 종료 타이밍은 애플리케이션이 정한 설정값을 따르게 됨을 알 수 있다.
+
+
+
+### Case Study - MQ 서버와 로드 밸런서
+
+* L4 뒤에 MQ서버 두 대가 있는 상황을 가정해보자
+* 그냥 운영하면 MQ서버에는 사용하지 않는 소켓이 많이 쌓여있고 (established) 정작 클라이언트에는 서버에 열려있는 소켓이 존재하지 않기도 한다. 또 간헐적으로 클라이언트가 MQ서버로 접근하다가 타임아웃이 나기도한다.
+* 문제의 원인은 L4의 Idle timeout. 로드 밸런서는 클라이언트와 서버의 소켓 연결이 맺어지면 해당 세션을 세션 테이블에 기억함. 이를 이용해 클라이언트가 다음 요청을 보냈을 때도 같은 서버로 패킷을 보낼 수 있는 것. 물론 이 세션 테이블은 무한한 공간이 아니므로 일정한 기준으로 비워줄 필요가 있고 이 때 Idle timeout을 사용해 해당 시간이 지날때까지 패킷이 흐르지 않은 세션을 세션 테이블에서 지워짐. 근데 지웠다는걸 누군가에게 알리지는 않으므로 클라이언트와 서버는 이를 알아차릴 수 없음.
+* Idle timeout이 지나 세션이 제거되어도 클라이언트를 이를 모름. 이 상태에서 클라이언트가 패킷을 보내면 로드 밸런서가 MQ1, MQ2 어디로 보낼지 알 수 없음. 원래 맺어진 서버가 MQ1이었고 운이 좋아 MQ1으로 가면 문제가 없음. 근데 MQ2로 갈 경우 MQ2 입장에서는 TCP Handshake를 맺지 않은 요청 패킷이 들어오므로 비정상 요청으로 보고 RST 패킷을 보냄. 클라이언트는 RST 패킷을 받았으니 TCP Handshake를 맺고 다시 요청을 보냄. 이 때 소요되는 시간이 애플리케이션에서 설정한 타임아웃 임계치를 넘어가면 Timeout Exception 을 경험하게 됨. 거기다 MQ1 입장에서는 클라이언트의 상황을 알 수 없으므로 MQ1에는 좀비 커넥션이 쌓이게 됨.
+* 해결방법 : 로드밸런서의 Idle timeout이 120초라면 tcp_keepalive_time을 60초, tcp_keepalive_probs를 3, tcp_keepalive_intvl를 10초로 설정하면 120초 이내에 미사용 소켓을 서버에서 정리할 수 있으므로 서버 측에 좀비 커넥션이 생기지 않게됨
+  * 이 때 RabbitMQ 의 TCP Keepalive 옵션을 켜야함. 켜지 않으면 소켓 자체가 SO_KEEPALIVE 옵션이 적용되지 않으므로 아무 의미가 없음.
+
+
+
+> DSR (Direct Server Return) : 로드 밸런서 환경에서 서버의 응답 패킷이 로드 밸런서를 거치지 않고 클라이언트에게 직접 전달되는 구조
+>
+> Inline 구조 : 서버로의 요청과 서버에서의 응답이 모두 로드 밸런서를 거치는 구조
+
+
+
+## 9장 TCP 재전송과 타임아웃
+
