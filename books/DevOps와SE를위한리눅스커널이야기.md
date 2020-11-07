@@ -705,17 +705,126 @@ ip route change default via 172.20.2.11 dev eth0 rto_min 100ms
 
 
 
+## 10장 dirty page가 I/O에 끼치는 영향
+
+* 디스크 I/O가 발생할 때 매번 디스크에서 I/O가 발생하는게 아니고 성능을 높이기 위해 메모리에 일시적으로 캐싱해두고 I/O가 발생함.
+* 쓰기 작업의 경우 메모리상에서만 쓰기가 발생하고 디스크에는 아직 반영되지 않은 페이지를 dirty page라 함.
+* dirty page 는 언젠가는 디스크에도 쓰여야하는데 이를 page writeback, dirty page 동기화라고 함. 
+* dirty page가 생길때마다 디스크에 동기화를 하려면 많은 쓰기 I/O로 인해 성능이 저하되므로 어느 정도 모아서 동기화할 필요가 있음. 어떤 조건으로 동기화를 하느냐에 따라 I/O 성능에 영향을 미치므로 I/O가 많이 발생하는 서버의 경우 dirty page 관련 성능 튜닝을 검토할 수 있음
 
 
 
+### dirty page 관련 커널 파라미터
+
+* vm.dirty_background_ratio = 10
+  * dirty page의 크기가 전체 메모리의 10%가 되면 백그라운드로 동기화를 진행한다.
+  * dirty_ratio보다 큰 값을 가질 수 없다. 크게 설정해도 커널에서 dirty_ratio보다 작은 값으로 낮추어 사용한다.
+* vm.dirty_ratio = 20
+  * dirty page의 크기가 전체 메모리의 20%가 되면 프로세스의 I/O 작업을 모두 멈추게 하고 동기화를 진행한다. dirty page에 대한 일종의 hard limit 개념. 
+  * dirty_background_ratio 값에 의해 백그라운드로 동기화를 해도 프로세스들이 쓰는 속도가 더 빠르면 dirty page가 계속 많아질 수 있는데 dirty_ratio 값에 도달하게 되면 프로세스들의 쓰기 작업 자체를 멈춰버리고 dirty page 동기화를 우선처리한다. 이 경우 많은 성능 저하가 발생한다.
+  * 최소값은 5 (커널마다 다를 수 있음)
+* vm.dirty_background_bytes = 0
+  * ratio와 달리 dirty page가 지정한 bytes 값에 도달하면 동기화를 진행한다.
+* vm.dirty_bytes = 0
+  * dirty_ratio와 동일한 역할을 한다. 비율이 아닌 bytes 단위로 동작한다.
+  * 참고로 dirty_background_bytes, dirty_bytes 을 사용하는 경우 ratio 관련 설정은 무시된다. 즉, bytes 설정이 우선이다.
+* vm.dirty_writeback_centisecs = 500
+  * 동기화 작업을 하는 flush 커널 스레드를 몇 초 간격으로 깨울지를 결정한다. 단위가 1/100초이므로 500이면 5초다.
+  * 0 이면 주기적인 동기화를 하지 않음.
+* vm.dirty_expire_centisecs = 1000
+  * dirty_writeback_centisecs 로 깨어난 flush 커널 스레드가 동기화에 사용하는 기준값. 단위가 1/100초이며 1000이면 dirty page로 분류된 후 30초 동안 디스크로 동기화되지 않은 페이지들을 동기화한다.
 
 
 
+### 동기화의 종류
+
+1. 백그라운드 동기화 : dirty_background_ratio, dirty_ratio 값등으로 발생하는 동기화. dirty page가 생길때 마다 현재까지 생성된 dirty page와 전체 메모리의 비율을 바탕으로 진행
+2. 주기적인 동기화 : dirty_writeback_centisecs, dirty_expire_centisecs 값을 통해 주기적으로 flush 데몬이 깨어나 동기화를 수행
+3. 명시적인 동기화 : sync, fsync 등의 명령어를 통해 명시적으로 동기화
 
 
 
+* 백그라운드, 주기적인 동기화는 둘 다 각각 설정된 조건에 맞추어 동작한다. 예를 들어 주기적인 동기화를 자주 발생하게 설정하면 백그라운드 동기화가 발생하는 임계치까지 dirty page가 증가하지 않을 수도 있다.
 
 
+
+### 연관명령어
+
+* iostat : I/O 사용량을 확인할 수 있음
+* `cat /proc/meminfo | grep -i dirty` : 현재 dirty page 크기 확인
+
+
+
+### 튜닝 포인트
+
+* 너무 자주 동기화시키면 flush 커널 스레드가 너무 자주 깨어남 ()
+* 너무 늦게 동기화시키면 동기화할 dirty page가 너무 많아 dirty_ratio에 도달할 가능성이 커짐.
+* 서버의 CPU, 디스크 쓰기 속도, 운용중인 어플리케이션의 종류에 따라 적절한 튜닝이 필요함
+* 예를 들어 디스크 쓰기속도가 10MB/s 인 서버 A와 100MB/s 인 서버B가 있고 둘 다 매초 100MB의 쓰기가 발생하는 애플리케이션을 운용중이라면 A서버는 10MB 단위로 동기화가 발생하도록 하는 것이 유리할 것이고 (만약 100MB 단위로 동기화할 경우 동기화 속도보다 쌓이는 속도가 더 빨라 dirty_ratio에 도달하여 큰 성능 저하가 발생) B서버는 100MB 단위로 동작하게 설정해도 충분하리라 예상할 수 있음.
+
+
+
+## 11장 I/O 작업이 지나가는 관문, I/O 스케줄러
+
+* 사용자가 발생시키는 모든 I/O작업은 가상 파일 시스템, 로컬 파일 시스템 등의 경로를 거쳐 블록 디바이스로 전달되기 전에 I/O 스케줄러를 거치게 됨
+* I/O 스케줄러는 상대적으로 속도가 느린 디스크에 대한 성능을 극대화하기 위한 프로그램
+* 기본적으로 병합과 정렬이라는 두 가지 방식으로 성능 최적화를 함
+* 이 중에서 정렬은 HDD와 같이 물리적인 헤드 이동이 필요했던 디스크에는 필요했지만 헤드이동 시간이 없는 SSD의 경우 정렬이 별 의미가 없고 되려 성능이 나빠질 수 있음.
+* 병합은 HDD, SSD 둘 다 사용함.
+
+
+
+### I/O 스케줄러 확인 및 변경
+
+* `cat /sys/block/<block device>/queue/scheduler`
+  * ex : `cat /sys/block/sda/queue/scheduler` 
+  * cfq, deadline, noop
+  * 스케줄러마다 튜닝가능한 파라미터가 다름
+    * 스케줄러에 따라 `/sys/block/<block device>/queue/iosched` 경로의 파일들이 달라지는데 여기에 있는 파일들이 현재 설정된 스케줄러가 설정가능한 튜닝값들
+* `echo cfq > /sys/block/<block device>/queue/scheduler`
+  * echo 명령어로 변환 가능
+  * 위는 cfq로 바꾸는 예제
+
+
+
+### cfq I/O 스케줄러
+
+* Completely Fair Queueing : 완전 공정 큐잉
+* 이름대로 모든 프로세스에서 I/O 요청들이 공정하게 실행되는 특징을 가짐
+
+
+
+### deadline I/O 스케줄러
+
+* I/O 요청별로 완료되어야 하는 dealine 을 가지는 스케줄러
+* 가능한 한 주어진 deadline을 넘기지 않도록 동작함
+
+
+
+### noop I/O 스케줄러
+
+* 병합만 하는 스케줄러
+* SSD와 같은 플래시 디스크에 권장
+* 튜닝 값 없음
+
+
+
+### 연관 명령어
+
+* iotop : 프로세스별로 발생시키는 I/O 작업 현황을 파악할 수 있음.
+* iosnoop
+  * 현재 시스템에서 발생하는 I/O 요청들의 섹터 주소로 볼 수 있어 순차 접근이 많은지 임의 접근이 많은지에 대한 I/O 워크로드 패턴을 살펴보는데 도움이 됨
+  * https://github.com/brendangregg/perf-tools/blob/master/iosnoop
+
+
+
+### 튜닝 포인트
+
+* 모든 워크로드를 만족시키는 스케줄러는 없고 시스템의 I/O 워크로드를 파악해서 어떤 스케줄러를 사용할지 판단해야 함
+* cfq : 프로세스별로 대등하게 I/O 시간이 주어져야하는 경우에 유리함. 
+  * ex) 웹 서버
+* dealine : 프로세스들의 I/O 요청중 몇몇 개의 프로세스가 많은 I/O 요청을 일으켜서 빨리 처리되어야 하는 경우에 적합. 또는 데이터베이스, 파일 서버에 적합
+* noop : 플래시 메모리 기반 디스크에 적합.
 
 
 
