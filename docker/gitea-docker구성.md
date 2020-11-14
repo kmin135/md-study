@@ -44,13 +44,13 @@ services:
 sudo docker-compose up -d
 ```
 
-* 최초 접속 후 로그인을 누른 후 나오는 초기설정 화면에서 db는 sqlite, localhost를 사용하는 설정값은 nas의 ip로 변경했음.
+* 최초 접속 후 로그인을 누른 후 나오는 초기설정 화면에서 db는 sqlite, localhost를 사용하는 설정값은 nas의 ip로 변경했음. (dns 설정했다면 설정한 도메인)
 * 확인 누른 뒤 초기화 작업이 약 10분 소요됐음.
 * 초기화 완료 후 최초로 생성한 계정이 관리자 권한이 됨.
 
 
 
-# mysql 사용 버전
+# mysql 사용 버전 (사용안함)
 
 * (20-04-12) 시놀로지에서 다시해보니 gitea가 mysql에 접근할 권한이 없으니 어쩌니 하면서 안 됨. mysql에 직접 붙어 계정을 추가해볼까도 했지만 번거로워서 패스하고 그냥 sqlite3 를 쓰는 걸로 설치했음.
 
@@ -127,3 +127,4 @@ vi gitea/gitea/conf/app.ini
 sudo docker-compose up -d
 sudo docker-compose down
 ```
+

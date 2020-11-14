@@ -570,6 +570,7 @@ tcp        0      0 172.20.2.11:33684       192.168.1.194:2222      ESTABLISHED 
 * 동작원리2 : keepalive timer가 다 되면 연결이 살아있는지 확인하는 작은 패킷을 보낸다.
 * 사용방법1 : 소켓을 생성할 때 소켓 옵션을 설정해야됨. setsockopt() 라는 함수를 사용하며 옵션 중에 SO_KEEPALIVE 를 사용하면 keepalive를 사용하는 것
 * 사용방법2 : 소켓을 직접 만들 때 그렇다는거고 보통 애플리케이션이 제공하는 tcp keepalive 옵션을 켜면된다.
+* 여담으로 google 등에 웹요청을 날려도 Keep-alive 관련 헤더는 응답으로 돌아오지 않는데 이는 HTTP/1.1 부터는 기본 동작이 keep-alive라 그렇다. (생략 가능)
 
 
 
@@ -828,5 +829,257 @@ ip route change default via 172.20.2.11 dev eth0 rto_min 100ms
 
 
 
+## 12장 애플리케이션 성능 측정과 튜닝
+
+* 예제 프로그램으로 성능 최적화 테스트
 
 
+
+### 테스트 python 코드
+
+```python
+import redis
+import time
+from flask import Flask
+app = Flask(__name__)
+
+# 1. 매번 새로운 redis 연결 생성
+@app.route("/test/<key>")
+def testApp(key):
+    r = redis.StrictRedis(host='localhost', port=6379, db=2)
+    r.set(key, time.time())
+
+    return r.get(key)
+
+# 2. redis 연결에 커넥션 풀 사용
+pool = redis.ConnectionPool(host='localhost', port=6379, db=0)
+@app.route("/test2/<key>")
+def testApp2(key):
+    r = redis.Redis(connection_pool=pool)
+    r.set(key, time.time())
+
+    return r.get(key)
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0')
+```
+
+
+
+### 성능 측정
+
+* 환경 : ubuntu 20.04 on wsl (4core, 6GB) / (호스트 pc : 하스웰 4670 4core)
+* 성능측정 도구 : siege
+  * https://www.joedog.org/siege-home/
+  * apt로도 설치가능했음
+  * 100명이 30초간 지속적으로 트래픽을 발생시키는 테스트
+* redis
+
+```bash
+docker run -it --rm -p 6379:6379 redis
+# tcp-keepalive 옵션은 기본으로 적용됨 (300초)
+```
+
+* 하나의 wsl에서 redis, 테스트 앱서버, siege를 다 돌린 것임을 감안하여 참고
+* python dependency
+
+```bash
+pip install flask
+pip install redis
+pip install gunicorn
+pip install eventlet
+```
+
+
+
+### 측정1 : 순수 flask
+
+* flask 내장 앱서버를 그대로 사용하므로 싱글 스레드 기반으로 동작
+
+```
+-- flask
+-- python3 performance.py
+-- redis 연결 : 매번 새로운 커넥션 생성
+-- siege -c 100 -b -t30s http://localhost:5000/test/1
+Transactions:                   9096 hits
+Availability:                 100.00 %
+Elapsed time:                  29.21 secs
+Data transferred:               0.15 MB
+Response time:                  0.32 secs
+Transaction rate:             311.40 trans/sec
+Throughput:                     0.01 MB/sec
+Concurrency:                   99.35
+Successful transactions:        9096
+Failed transactions:               0
+Longest transaction:            0.75
+Shortest transaction:           0.03
+```
+
+
+
+### 측정2 : flask + gunicorn
+
+* cpu 활용을 최대화하기 위해 gunicorn 적용 후 복수의 워커 설정
+* 최소 서버의 cpu 코어수만큼 설정하고 부하에 따라 워커의 개수를 조정할 수 있음
+* `ss -s` 로 확인해보면 많은 time_wait 소켓이 생김
+  * `netstat -anpo | grep -ic time_wait`
+
+```
+-- flask + gunicorn (4 workers, sync worker)
+-- gunicorn -w 4 -b 0.0.0.0:5000 performance:app
+-- redis 연결 : 매번 새로운 커넥션 생성
+-- siege -c 100 -b -t30s http://localhost:5000/test/1
+The server is now under siege...
+Lifting the server siege...
+Transactions:                  19043 hits
+Availability:                 100.00 %
+Elapsed time:                  29.72 secs
+Data transferred:               0.32 MB
+Response time:                  0.16 secs
+Transaction rate:             640.75 trans/sec
+Throughput:                     0.01 MB/sec
+Concurrency:                   99.37
+Successful transactions:       19043
+Failed transactions:               0
+Longest transaction:            0.45
+Shortest transaction:           0.05
+```
+
+
+
+### 측정3 : flask + gunicorn + redis connection pool
+
+* app -> redis 연결을 할 때마다 매번 커넥션을 맺지 않고 connection pool을 사용하는 url을 호출함
+* 한 번 맺은 세션을 계속 사용하므로 TCP Handshake에 대한 오버헤드가 줄어들어 성능이 개선됨
+* 그러나 여전히 앱서버쪽에는 time_wait 소켓이 많이 생김
+
+```
+-- flask + gunicron (4 workers, sync worker)
+-- gunicorn -w 4 -b 0.0.0.0:5000 performance:app
+-- redis 연결 : connection pool 적용
+-- siege -c 100 -b -t30s http://localhost:5000/test2/1
+Transactions:                  45869 hits
+Availability:                 100.00 %
+Elapsed time:                  29.15 secs
+Data transferred:               0.78 MB
+Response time:                  0.06 secs
+Transaction rate:            1573.55 trans/sec
+Throughput:                     0.03 MB/sec
+Concurrency:                   99.73
+Successful transactions:       45869
+Failed transactions:               0
+Longest transaction:            0.19
+Shortest transaction:           0.03
+```
+
+
+
+### 측정4 : flask + gunicorn (keep-alive, eventlet worker) + redis connection pool
+
+* 앱서버의 time_wait 소켓을 없애기 위해 gunicorn 에 keepalive 를 설정함
+* gunicorn의 디폴트 worker인 sync는 keepalive를 지원하지 않으므로 eventlet worker를 적용함
+* keepalive 설정과 비동기 worker인 eventlet 이 성능을 향상시킨 것
+
+```
+-- flask + gunicron (4 workers, keep-alive, eventlet worker)
+-- gunicorn -w 4 -b 0.0.0.0:5000 performance:app --keep-alive 10 -k eventlet
+-- redis 연결 : connection pool 적용
+
+-- 테스트전 ~/.siege/siege.conf 에서 
+-- conncection 값을 close -> keep-alive 로 변경
+
+-- siege -c 100 -b -t30s -H "Connection: keep-alive" http://localhost:5000/test2/1
+Transactions:                  55468 hits
+Availability:                 100.00 %
+Elapsed time:                  29.34 secs
+Data transferred:               0.94 MB
+Response time:                  0.05 secs
+Transaction rate:            1890.52 trans/sec
+Throughput:                     0.03 MB/sec
+Concurrency:                   99.70
+Successful transactions:       55468
+Failed transactions:               0
+Longest transaction:            0.41
+Shortest transaction:           0.00
+```
+
+* 측정3과 같이 gunicorn을 keepalive를 지원하지 않는 상태로 띄워놓고 siege는 keep-alive 지원으로 테스트해보면 아래와 같이 금새 테스트가 실패한다.
+* error 메시지로 보아 RST packet 을 받아 소켓이 비정상종료되었음을 알 수 있다. 즉 서버 입장에서는 이미 연결이 종료된 소켓인데 클라이언트는 keep-alive 일거라 생각하고 계속 요청을 보내니 서버로부터 RST 패킷을 받은 것.
+
+```
+...
+[error] socket: read error Connection reset by peer sock.c:539: Connection reset by peer
+...
+Transactions:                   1123 hits
+Availability:                  52.31 %
+Elapsed time:                   1.16 secs
+Data transferred:               0.02 MB
+Response time:                  0.10 secs
+Transaction rate:             968.10 trans/sec
+Throughput:                     0.02 MB/sec
+Concurrency:                   92.42
+Successful transactions:        1123
+Failed transactions:            1024
+Longest transaction:            0.14
+Shortest transaction:           0.0
+```
+
+
+
+### nginx 적용
+
+* 통상적으로 gunicorn과 같은 앱서버로 직접 사용자 요청을 받지 않는다.
+* 앞에 nginx, apache 등의 웹서버를 두는 것이 보통
+* 이유는 보안 설정, virutal host 등의 다양한 라우팅 정책 설정 등에서 유리하기 때문
+  * 내의견) cdn이 없다면 정적자원 배포역할을 해줄 수도 있고 reverse proxy 역할도 할 수 있음
+
+
+
+* 예제에서는 nginx를 디폴트 상태로 gunicorn과 합치고 사용자수를 늘리다보면 nginx -> gunicorn 으로의 전달에서 로컬 포트가 고갈되어 문제가 생길 수 있는 것을 보여줌
+* 첫번째 해결방법은 `net.ipv4.tcp_tw_resue` 를 1로 설정하여 time_wait 상태의 로컬포트를 즉시 재사용할 수 있게 하는 것
+* 더 근본적인 해결방법은 nginx 설정을 조정하여 nginx -> gunicorn 구간을 keepalive 모드로 동작시키는 것
+
+```
+# nginx.conf
+
+...
+upstream gunicorn {
+  server my.gunicorn.com:5000;
+  keepalive 1024;
+}
+```
+
+* 로컬포트와는 별도로 동시 접속자수가 계속 늘어나면 nginx의 worker 수 자체가 모자라서 에러가 발생할 수도 있는데 이 때는 worker 설정을 조정해야함
+
+```
+[alert] 7431#0: 1024 worker_connections are not enough
+```
+
+```
+# nginx. conf
+
+...
+events {
+  use epoll;
+  worker_connections 10240;
+  multi_accept on;
+}
+```
+
+* worker의 개수를 늘렸고
+* select 방식의 이벤트 처리 모듈에서 epoll 방식으로 변경함. 일반적으로 epoll 방식이 성능이 좋다고함.
+
+
+
+### 정리
+
+* CPU, 소켓 등의 서버 자원은 여유로운데 성능이 만족스럽지 않다면 애플리케이션 코드의 성능 최적화도 중요하지만 서버 설정도 함께 확인해야한다.
+* 물론 다양한 시나리오의 성능 테스트로 정상 동작함을 검증해야한다.
+
+
+
+* CPU 자원을 제대로 활용하고 있는지 확인한다. 애플리케이션의 워커수를 조정하여 최적의 값을 찾아야한다. 최소한 cpu 코어 수 만큼은 워커 개수를 설정하자.
+* 다수의 time_wait 소켓이 발견된다는 것은 tcp handshake가 빈번히 발생함을 의미한다. 어느 구간에서 time_wait 소켓이 발생하는지 확인하고 keepalive 등을 적용해 성능을 높일 수 있다.
+
+* 다른 서비스들과 연동하는 경우 keepalive 옵션 등을 이용해 연결을 만들어 놓고 커넥션 풀 방식으로 사용하면 성능을 높일 수 있다.
+* 이외에도 시스템 리소스는 넉넉한데 서비스 응답 속도가 느리거나 장애가 발생한다면 애플리케이션의 워커 설정 등 애플리케이션이 제공하는 설정을 점검하자. 잘못된 설정을 무시하고 무턱대고 서버를 늘린다고 해도 금방 문제가 재발할 가능성이 높다.
