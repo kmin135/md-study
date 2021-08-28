@@ -41,6 +41,7 @@ sudo apt-get install jenkins
 
 #### 명령
 
+* 컴퓨터 부팅시에 바로 시작되게 하려면 [wsl-guide.md](wsl-guide.md) 내용 참고
 ```bash
 sudo service jenkins start
 sudo service jenkins restart
@@ -51,6 +52,12 @@ sudo service jenkins stop
 
 * `http://localhost:8080` 또는 `http://[wsl 의 ip]:8080` 으로 접속
   * `127.0.0.1` 이나 host ip로 안 되는거보면 wsl이 `localhost`에 한해서 자동 포워딩 해주는 기능이 있는 것 같음
+
+#### (TBD) 백업&복구
+
+* ThinBackup 활용
+* 다른 PC에 똑같이 wsl 설치하고 복구가 잘 되는지 해보기
+* 잘 되면 백업한 내용을 주기적으로 nas에 백업해둘 필요도 있음. cron과 smb 를 활용해야할듯.
 
 ### docker-in-docker 방식
 
