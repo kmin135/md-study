@@ -15,7 +15,7 @@ source ~/.bashrc
 ```
 
 * apt 서버 국내로 변경
-
+    * 210828 기준 daum은 링크가 죽은듯. 다른 미러로 하던가 아예 수정하지말것.
 ```bash
 sudo sed -i 's/archive.ubuntu.com/ftp.daum.net/g' /etc/apt/sources.list
 ```
