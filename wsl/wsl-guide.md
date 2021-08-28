@@ -2,11 +2,25 @@
 
 * wsl2를 사용하며 정리한 가이드
 
+# 설치
 
+* https://docs.microsoft.com/en-us/windows/wsl/install-win10
 
 # 초기세팅
 
-* alias 세팅
+## dns 변경 
+
+* `apt-get` 이 에러나는 상황 등 해결
+```bash
+sudo vi /etc/resolv.conf
+```
+```bash
+# 기존 nameserver를 아래로 대체
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+```
+
+## alias 세팅
 
 ```bash
 # wsl의 현재경로를 windows explorer에 띄움
@@ -14,19 +28,17 @@ echo "alias open='explorer.exe .'" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-* apt 서버 국내로 변경
-    * 210828 기준 daum은 링크가 죽은듯. 다른 미러로 하던가 아예 수정하지말것.
+## apt 서버 국내로 변경
+
+* 210828 기준 daum은 링크가 죽은듯. 다른 미러로 하던가 아예 수정하지말것.
 ```bash
 sudo sed -i 's/archive.ubuntu.com/ftp.daum.net/g' /etc/apt/sources.list
 ```
-
-* tmux 설정
+## tmux 설정
 
 ```bash
 echo "setw -g mouse on" > ~/.tmux.conf
 ```
-
-
 
 # 자원사용제한
 
@@ -115,6 +127,7 @@ sudo visudo
 
 * 작업 스케줄러로 windows 로그인시 필요한 wsl 명령들을 수행하도록 함
 * 예를 들어 cron을 항상 시작시키고 싶다면 아래와 같이 한다.
+* sudo NOPASSWD 설정을 먼저 해야함.
 
 ```
 작업 스케줄러 > 기본 작업 만들기
