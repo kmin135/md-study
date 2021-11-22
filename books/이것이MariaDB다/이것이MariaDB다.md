@@ -145,3 +145,6 @@ WHERE ToDelete.rn > 1;
 
 * 위와 같이 delete나 update에도 응용할 수 있음
 * cte 자체를 수정하거나 삭제하는건 안 됨
+
+# Chap07 SQL 고급
+
