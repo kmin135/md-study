@@ -118,7 +118,6 @@ SELECT * FROM temp ORDER BY total;
 * 이를 통해 복잡한 쿼리를 단순화시킬 수 있음
 * result set에 임시로 이름을 지어준 것이라 볼 수 있음
 > Common Table Expressions (CTEs) are a standard SQL feature, and are essentially temporary named result sets.
-* UPDATE 도 가능하다고 함 (안해봄)
 
 ```
 WITH AAA (칼럼들)
@@ -147,5 +146,3 @@ WHERE ToDelete.rn > 1;
 * cte 자체를 수정하거나 삭제하는건 안 됨
 
 # Chap07 SQL 고급
-
-- 테스트
