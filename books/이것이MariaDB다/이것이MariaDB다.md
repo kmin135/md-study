@@ -146,3 +146,101 @@ WHERE ToDelete.rn > 1;
 * cte 자체를 수정하거나 삭제하는건 안 됨
 
 # Chap07 SQL 고급
+
+## Data Types
+
+* 대략적인 내용만 정리, 크기 등의 구체적인 스펙은 아래 공식 문서를 참조
+* https://mariadb.com/kb/en/data-type-storage-requirements/
+### 숫자 데이터
+
+* 정수형 : 기본은 INT, 큰수는 BIGINT
+* 실수형 : 기본은 FLOAT, 큰수는 DOUBLE
+  * 프로그래밍 언어와 마찬가지로 매우 큰 수를 저장할 수 있지만 소수점 이하 n자리(float 7, double 15)까지만 정확도가 보존되므로 정확한 값이 필요한 경우 주의
+* 정확한 실수형 : `DECIMAL(m,[d])` 은 명시적으로 전체 자리수와 소수점 이하 자리수를 지정할 수 있어 정확한 실수를 저장하기 용이함, 가변 바이트임.
+  * DECIMAL(5,2) : 전체 자리수 5자리, 소수점 이하 2자리  `ex. 123.45`
+  * 21-11-28기준 10.2.1 버전 이후로는 m은 최대 65, d는 최대 38
+  * m (기본10), d (기본0) 모두 생략가능하나 DECIMAL을 쓸거라면 목적에 맞게 명확히 정의하는게 좋겠다.
+* 그 외에 `BIT(N)`, TINYINT 등이 존재하니 용량에 민감한 테이블을 설계한다면 고려
+* `UNSIGNED` 설정이 가능하므로 음수가 필요없고 더 큰 값을 저장하기를 원할 경우 고려
+
+### 문자 데이터
+
+* 고정길이 : CHAR (최대 255)
+  * 실제값의 크기 관계 없이 설정한 크기를 모두 사용
+* 가변길이 : VARCHAR(M) (최대 65532)
+  * 지정가능한 최대 M은 최대 row size와 인코딩에 따라 다름.
+  * 예를 들어 utf8 일 경우 1자에 3bytes로 잡아서 21,844 까지 지정가능함. 그러나 다른 char 타입들이 있을 경우 최대 row size에 걸려서 그 미만으로 잡아야할 수 있음.
+  * INSERT/UPDATE 시의 속도는 CHAR 보다 상대적으로 느림.
+* TEXT : TEXT (최대 64KB), LONGTEXT (최대 4GB)
+  * 실제 저장할 수 있는 최대 문자 길이는 인코딩에 따라 다름. 
+  * 또한 client, server의 최대 패킷 크기 설정이나 가용 메모리에 따라 최대값만큼 사용하지 못 할 수 있으니 주의 필요.
+* ENUM
+* SET
+
+> 생각거리 : CHAR vs VARCHAR
+>> 이 책도 그렇고 성능적인 면에서 CHAR 가 유리하다는게 일반적인 설명이고 성능에 대한 비교는 인터넷에서도 많은 토론이 있음. 내 개인적인 결론은 성능이 좋아지는게 맞긴 한데 Trailing spaces 의 처리가 sql_mode에 따라 달라지는 문제가 있고 오늘날의 컴퓨팅 성능에서 둘의 성능차이는 큰 의미가 없으므로 개발 생산성 면에서 VARCHAR 로 기준을 통일하는게 좋다고 봄. 
+
+ ```sql
+ -- char, varchar 의 차이점
+CREATE OR REPLACE TABLE strtest (c CHAR(10), vc VARCHAR(10));
+INSERT INTO strtest VALUES('Maria   ', 'Maria   ');
+
+-- 둘 다 true, true
+SELECT c='Maria',c='Maria   ' FROM strtest;
+SELECT vc='Maria',vc='Maria   ' FROM strtest;
+
+-- true, false
+SELECT c LIKE 'Maria',c LIKE 'Maria   ' FROM strtest;
+-- false, true
+SELECT vc LIKE 'Maria',vc LIKE 'Maria   ' FROM strtest;
+
+-- (Maria),(Maria   )
+SELECT CONCAT('(', c, ')'), CONCAT('(', vc, ')') FROM strtest;
+```
+
+> 생각거리 : ENUM, SET
+>> 프로그래밍 언어의 enum과 set 역할을 할 수 있는 타입들임. 내 생각은 이런것들은 프로그래밍 언어에게 맡기고 DBMS 상에서는 VARCHAR 로 정의하는게 용이하다고 봄.
+
+ ### 이진 데이터
+
+* 공식 문서에서는 CHAR 들과 같이 String Data Type으로 구분하나 이진 데이터 저장에 특화된 타입들이므로 구분해서 작성
+* 고정길이 : BINARY(n)
+* 가변길이 : VARBINARY(n)
+* BLOB : BLOB (최대 64KB), LONGBLOB (최대 4GB)
+
+> 생각거리 : 이진 데이터의 DB 저장
+>> 안 좋은 생각임. 일단 비용면에서 DBMS 스토리지가 통상의 NAS 보다 비쌈. 성능 면에서도 일반적인 쿼리하기도 바쁜 DB에 이미지나 영상같은 blob을 저장하고 읽는것은 낭비임.
+
+### 날짜와 시간 데이터 형식
+
+* YEAR : 년도만 `YYYY`
+* DATE : 날짜만 `YYYY-MM-DD`
+* TIME : 시간만 `HH:MM:SS`, microsecond (0~6) 지정 가능
+* DATETIME : 날짜+시간, `YYYY-MM-DD HH:MM:SS`, microsecond (0~6) 지정 가능
+  * 자동 타임존 변환을 제공하지 않음
+  * `1000-01-01 00:00:00.000000` ~ `9999-12-31 23:59:59.999999`
+  * 8 bytes
+* TIMESTMAP : DATETIME과 값 형식은 동일함
+  * 현재 세션의 `time_zone` 값에 따라 자동 타임존 변환을 제공함
+  * UTC 기준 `1970-01-01 00:00:01` ~ `2038-01-19 03:14:07` 까지만 저장가능
+  * 4 bytes 로 datetime 의 절반
+
+```sql
+CREATE OR REPLACE TABLE timetest (dt DATETIME, ts TIMESTAMP);
+SET TIME_ZONE = "europe/london";
+insert into timetest values(NOW(), NOW());
+-- 런던으로 했으므로 utc+0 기준으로 저장되었고 값도 당연히 동일함
+select dt, ts from timetest;
+
+SET TIME_ZONE = "asia/seoul";
+-- 서울(utc+9) 로 세션 time_zone을 변경하면 datetime은 값은 그대로고 timestamp 는 utc+9 이 적용됨
+select dt, ts from timetest;
+```
+
+> 생각거리 : DATETIME vs TIMESTAMP
+>> 용량이나 타임존 세팅을 해주는 점에서 timestamp 도 장점이 있으나 아무래도 지원 가능 범위의 이슈로 datetime이 무난하다. timezone 의 경우 app단에서 처리하면 된다.
+
+### 기타
+
+* GEOMETRY : 공간 데이터 형식으로 선, 점 및 다각형 같은 공간 데이터 개체를 저장하고 조작
+* JSON : JSON 문서 저장에 특화된 필드
