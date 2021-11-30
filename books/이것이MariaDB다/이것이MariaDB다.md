@@ -315,12 +315,14 @@ show variables like '%max_allowed_packet%';
 insert into maxTbl values (repeat('a', 10000000), repeat('가', 1073741824));
 
 -- 그래서 서버에서 직접 쉘로 붙어서 하니 1GB 이상도 packet 에러나는 안 남.
--- 근데 서버 스펙의 문제로 OOM 발생...
+-- 근데 서버 스펙의 문제로 OOM 발생 
+-- 좋은 서버라도 이런짓은 하지 말자
 insert into maxTbl values (repeat('a', 50000000), repeat('a', 1073741824));
 -- ERROR 5 (HY000): Out of memory (Needed 0 bytes)
 
 /*
 - 즉, longtext가 스펙상 4GB 까지 저장이 가능하지만 대부분의 케이스에서 dbms는 원격접속하므로 max_allowed_packet 의 최대값에 걸려 1GB 이상의 데이터를 저장할 수 없음을 알 수 있음.
+- 하지만, 애초에 칼럼 하나에 1GB 이상의 데이터를 저장하려는 설계가 문제임. 비용면에서나 성능면에서도 잘못된 선택.
 - 로컬 접속은 영향을 받지 않음도 알 수 있음. 소켓을 열지 않고 직접 접속이기 때문으로 보임.
 - 참고로 max_allowed_packet 값은 서버와 클라이언트 각각 지정이 필요한데 클라이언트는 기본값이 1GB라 딱히 건드릴 일은 없음
 - replication 할 때는 slave_max_allowed_packet 값이 따로 있으니 참고
