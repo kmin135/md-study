@@ -171,14 +171,15 @@ WHERE ToDelete.rn > 1;
   * 지정가능한 최대 M은 최대 row size와 인코딩에 따라 다름.
   * 예를 들어 utf8 일 경우 1자에 3bytes로 잡아서 21,844 까지 지정가능함. 그러나 다른 char 타입들이 있을 경우 최대 row size에 걸려서 그 미만으로 잡아야할 수 있음.
   * INSERT/UPDATE 시의 속도는 CHAR 보다 상대적으로 느림.
-* TEXT : TEXT (최대 64KB), LONGTEXT (최대 4GB)
+* TEXT : TEXT (최대 64KB), LONGTEXT (최대 약 4GB)
   * 실제 저장할 수 있는 최대 문자 길이는 인코딩에 따라 다름. 
   * 또한 client, server의 최대 패킷 크기 설정이나 가용 메모리에 따라 최대값만큼 사용하지 못 할 수 있으니 주의 필요.
 * ENUM
 * SET
 
 > 생각거리 : CHAR vs VARCHAR
->> 이 책도 그렇고 성능적인 면에서 CHAR 가 유리하다는게 일반적인 설명이고 성능에 대한 비교는 인터넷에서도 많은 토론이 있음. 내 개인적인 결론은 성능이 좋아지는게 맞긴 한데 Trailing spaces 의 처리가 sql_mode에 따라 달라지는 문제가 있고 오늘날의 컴퓨팅 성능에서 둘의 성능차이는 큰 의미가 없으므로 개발 생산성 면에서 VARCHAR 로 기준을 통일하는게 좋다고 봄. 
+>
+> > 이 책도 그렇고 성능적인 면에서 CHAR 가 유리하다는게 일반적인 설명이고 성능에 대한 비교는 인터넷에서도 많은 토론이 있음. 내 개인적인 결론은 성능이 좋아지는게 맞긴 한데 Trailing spaces 의 처리가 sql_mode에 따라 달라지는 문제가 있고 오늘날의 컴퓨팅 성능에서 둘의 성능차이는 큰 의미가 없으므로 개발 생산성 면에서 VARCHAR 로 기준을 통일하는게 좋다고 봄. 
 
  ```sql
  -- char, varchar 의 차이점
@@ -196,20 +197,22 @@ SELECT vc LIKE 'Maria',vc LIKE 'Maria   ' FROM strtest;
 
 -- (Maria),(Maria   )
 SELECT CONCAT('(', c, ')'), CONCAT('(', vc, ')') FROM strtest;
-```
+ ```
 
 > 생각거리 : ENUM, SET
->> 프로그래밍 언어의 enum과 set 역할을 할 수 있는 타입들임. 내 생각은 이런것들은 프로그래밍 언어에게 맡기고 DBMS 상에서는 VARCHAR 로 정의하는게 용이하다고 봄.
+>
+> > 프로그래밍 언어의 enum과 set 역할을 할 수 있는 타입들임. 내 생각은 이런것들은 프로그래밍 언어에게 맡기고 DBMS 상에서는 VARCHAR 로 정의하는게 용이하다고 봄.
 
  ### 이진 데이터
 
 * 공식 문서에서는 CHAR 들과 같이 String Data Type으로 구분하나 이진 데이터 저장에 특화된 타입들이므로 구분해서 작성
 * 고정길이 : BINARY(n)
 * 가변길이 : VARBINARY(n)
-* BLOB : BLOB (최대 64KB), LONGBLOB (최대 4GB)
+* BLOB : BLOB (최대 64KB), LONGBLOB (최대 약 4GB)
 
 > 생각거리 : 이진 데이터의 DB 저장
->> 안 좋은 생각임. 일단 비용면에서 DBMS 스토리지가 통상의 NAS 보다 비쌈. 성능 면에서도 일반적인 쿼리하기도 바쁜 DB에 이미지나 영상같은 blob을 저장하고 읽는것은 낭비임.
+>
+> > 안 좋은 생각임. 일단 비용면에서 DBMS 스토리지가 통상의 NAS 보다 비쌈. 성능 면에서도 일반적인 쿼리하기도 바쁜 DB에 이미지나 영상같은 blob을 저장하고 읽는것은 낭비임.
 
 ### 날짜와 시간 데이터 형식
 
@@ -222,6 +225,7 @@ SELECT CONCAT('(', c, ')'), CONCAT('(', vc, ')') FROM strtest;
   * 8 bytes
 * TIMESTMAP : DATETIME과 값 형식은 동일함
   * 현재 세션의 `time_zone` 값에 따라 자동 타임존 변환을 제공함
+    * unix time 을 저장하는거라 가능한 것
   * UTC 기준 `1970-01-01 00:00:01` ~ `2038-01-19 03:14:07` 까지만 저장가능
   * 4 bytes 로 datetime 의 절반
 
@@ -238,9 +242,95 @@ select dt, ts from timetest;
 ```
 
 > 생각거리 : DATETIME vs TIMESTAMP
->> 용량이나 타임존 세팅을 해주는 점에서 timestamp 도 장점이 있으나 아무래도 지원 가능 범위의 이슈로 datetime이 무난하다. timezone 의 경우 app단에서 처리하면 된다.
+>
+> > 용량이나 타임존 세팅을 해주는 점에서 timestamp 도 장점이 있으나 아무래도 지원 가능 범위의 이슈로 datetime이 무난하다. timezone 의 경우 app단에서 처리하면 된다.
 
 ### 기타
 
 * GEOMETRY : 공간 데이터 형식으로 선, 점 및 다각형 같은 공간 데이터 개체를 저장하고 조작
 * JSON : JSON 문서 저장에 특화된 필드
+
+
+
+## 내장 함수
+
+* 종종 필요하다고 생각되는 함수들 중에 정리할만한 것들만 작성함
+* 필요하면 공식문서를 보자
+  * https://mariadb.com/kb/en/built-in-functions/
+* 형변환 : CAST, CONVERT
+
+```sql
+SELECT CAST('1' AS INTEGER);
+```
+
+* 길이 체크 함수
+
+```sql
+-- 순서대로 bits 크기, 문자수, bytes 크기
+-- 72, 3, 9, 27, 3, 3
+select bit_length('가나다'), char_length('가나다'), length('가나다'),
+       bit_length('abc'), char_length('abc'), length('abc');
+```
+
+* 시스템 정보 함수
+
+  > datagrip 에서는 결과가 잘 안나왔다. 해당 프로그램에서 결과 출력을 위해 먼저 호출해서 결과가 안 나오는 걸지도 모르겠다. 쉘로 접근해서 해보면 잘 된다.
+
+```sql
+-- 직전의 SELECT 문에서 조회된 행의 개수
+select found_rows();
+-- 직전의 update, insert, delete의 영향을 받은 행의 수
+select row_count();
+```
+
+* 기타
+
+```sql
+-- 지정한 초만큼 일시정지 후 0을 리턴
+-- 도중에 인터럽트되면 1을 리턴
+select sleep(5);
+-- 소수점 이하도 가능 (공식문서에는 마이크로초를 지정 가능하다고 함)
+select sleep(1.5);
+```
+
+### REPEAT 를 이용한 용량 실험 (max_allowed_packet)
+
+```sql
+-- longtext는 약 4GB 까지 저장 가능
+create table maxTbl (col1 longtext, col2 longtext);
+-- repeat는 입력한 문자열을 지정횟수만큼 반복해주는 함수로 테스트에 용이함
+insert into maxTbl values (repeat('a', 1000000), repeat('가', 1000000));
+-- 1000000,3000000
+-- 즉, 약 1MB, 3MB 임을 알 수 있음
+select length(col1), length(col2) from maxTbl;
+
+-- 0을 한 개씩 붙여 총 40MB 정도를 저장하려고 하니 max_allowed_packet 크기에 걸림
+-- 버전에 따라 다른데 테스트 한 버전의 기본값은 16777216임 (16MB)
+insert into maxTbl values (repeat('a', 10000000), repeat('가', 10000000));
+
+-- 서버의 max_allowed_packet 값을 최대값인 1024MB 로 설정 후 재시작 한 뒤 다시하면 정상적으로 저장됨
+show variables like '%max_allowed_packet%';
+
+-- 다음과 같이 3GB를 살짝 넘는 데이터 저장을 시도하니 역시 max_allowed_packet 에 걸려서 에러가 남
+insert into maxTbl values (repeat('a', 10000000), repeat('가', 1073741824));
+
+-- 그래서 서버에서 직접 쉘로 붙어서 하니 1GB 이상도 packet 에러나는 안 남.
+-- 근데 서버 스펙의 문제로 OOM 발생...
+insert into maxTbl values (repeat('a', 50000000), repeat('a', 1073741824));
+-- ERROR 5 (HY000): Out of memory (Needed 0 bytes)
+
+/*
+- 즉, longtext가 스펙상 4GB 까지 저장이 가능하지만 대부분의 케이스에서 dbms는 원격접속하므로 max_allowed_packet 의 최대값에 걸려 1GB 이상의 데이터를 저장할 수 없음을 알 수 있음.
+- 로컬 접속은 영향을 받지 않음도 알 수 있음. 소켓을 열지 않고 직접 접속이기 때문으로 보임.
+- 참고로 max_allowed_packet 값은 서버와 클라이언트 각각 지정이 필요한데 클라이언트는 기본값이 1GB라 딱히 건드릴 일은 없음
+- replication 할 때는 slave_max_allowed_packet 값이 따로 있으니 참고
+https://mariadb.com/kb/en/server-system-variables/#max_allowed_packet
+*/
+```
+
+
+
+## 윈도우 함수
+
+* 윈도우 함수는 10.2.0 부터 도입됨
+* https://mariadb.com/kb/en/window-functions/
