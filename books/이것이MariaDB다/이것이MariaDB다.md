@@ -336,3 +336,177 @@ https://mariadb.com/kb/en/server-system-variables/#max_allowed_packet
 
 * 윈도우 함수는 10.2.0 부터 도입됨
 * https://mariadb.com/kb/en/window-functions/
+
+---
+
+* 현재 행과 관련된 일련의 행에서 계산을 수행할 수 있음
+* 집계 함수와 비집계 함수로 구분됨
+
+
+
+### 순위 함수
+
+* 비집계 함수 중에서 순위를 표현하는 함수들
+* RANK(), NTILE(), DENSE_RANK(), ROW_NUMBER() 등
+
+```sql
+/*
+function (expression) OVER (
+  [ PARTITION BY expression_list ]
+  [ ORDER BY order_list [ frame_clause ] ] ) 
+*/
+
+-- 각 행의 관계속에서 순위를 쉽게 추출할 수 있음
+select row_number() over (order by height desc, name asc) '키순서', 
+  name, addr, height
+from usertbl
+order by `키순서`;
+
+-- PARITION BY 를 활용해 전체 순위가 아니라 그룹별 순위를 추출할 수도 있음
+select row_number() over (partition by addr order by height desc, name asc) '키순서',
+  name, addr, height
+from usertbl
+order by addr, `키순서`;
+
+-- DENSE_RANK(), RANK() 는 동일 순위가 있을 경우의 처리가 다르니 필요에 따라 사용
+
+-- NTILE 은 순위를 매긴뒤 지정한 값만큼 그룹번호를 매김
+select ntile(4) over (order by height desc, name asc) '반',
+  name, addr, height
+from usertbl
+order by `반`;
+```
+
+
+
+### 분석 함수
+
+* 비집계 함수 중에서 이동 평균, 백분율, 누계 등을 계산할 때 활용
+* CUME_DIST(), LEAD(), LAG(), FIRST_VALUE(), PERCENT_RANK() 등
+
+```sql
+-- 키 내림차순 정렬한 뒤 각 행의 다음행의 키와의 차이를 얻는 쿼리
+-- 마지막행은 비교할 다음행이 없으므로 null
+-- LAG()는 LEAD와 방향이 반대
+select name, addr, height '키',
+       height - (LEAD(height, 1) OVER (order by height desc)) '다음 사람과 키 차이'
+from usertbl;
+```
+
+
+
+## 피벗
+
+* group by, sum, if 를 조합한 일반적인 피벗을 소개함
+
+> 내의견 : 보통 mysql pivot 으로 찾아보면 group by 절 쓴 뒤 필드마다 sum 같은 집계함수 + if 문으로 노가다방식으로 짜는게 많다. 다만 이 방식은 열이 동적으로 늘어나는 케이스를 커버할 수 없다. 딱히 대안은 못 봤다.
+>
+> 또한 개발용이 아니라 데이터 추출용이라면 이런 노가다 방식 말고 보통 클라이언트 프로그램들이 결과를 토대로 pivot, tranpose 기능을 제공하기 때문에 그걸 이용하는게 나을 수도 있다.
+
+
+
+## JSON
+
+* 10.2 부터 JSON 데이터 처리를 지원하는 기능이 추가됨
+
+```sql
+-- DB의 데이터를 JSON 값으로 변환할 때는 JSON_OBJECT, JSON_ARRAY 를 사용
+select JSON_OBJECT('name', name, 'height', height) AS 'JSON 값'
+from usertbl;
+
+/*
+{"name": "바비킴", "height": 176}
+{"name": "은지원", "height": 174}
+*/
+
+-- 반면 JSON 값을 받아 유효성체크, 검색, 변환 등을 담당하는 함수들도 있음
+-- JSON_VALID, JSON_SEARCH, JSON_EXTRACT, JSON_INSERT, JSON_REPLACE, JSON_REMOVE
+```
+
+
+
+## 조인
+
+* INNER JOIN
+* OUTER JOIN (LEFT, RIGHT, FULL)
+
+---
+
+* CROSS JOIN
+  * 한쪽 테이블의 모든 행들과 다른 쪽 테이블의 모든 행을 조인하는 것
+  * 결과 행수는 두 테이블의 행수를 곱한 것이 됨
+  * 즉, 카티션곱
+  * 테스트 데이터 만드는 정도 말고 딱히 쓸 일은 없음
+
+```sql
+-- cross join 자체가 전체곱을 의미하므로 ON 절은 사용 불가
+select * 
+from buytbl
+  cross join usertbl;
+  
+-- 아래와 동일함
+select *
+from buytbl, usertbl;
+```
+
+---
+
+* SELF JOIN
+  * 별도의 구문이 있는 건 아니고 자기 자신과 조인함을 의미
+  * 예를 들어 회사 부서 테이블의 계층 구조를 표현할 때 사용할 수 있음
+
+```sql
+select l1.dept_name, l2.dept_name '상위 부서'
+from dept l1
+  join dept l2
+    on l1.up_dept_cd = l2.dept_cd
+```
+
+
+
+## UNION
+
+* 여러 SELECT 문의 결과를 합침
+* 합쳐야하므로 두 SELECT 문의 결과 열의 개수 같아야하고 데이터 형식이 호환되야함
+* 그냥 `UNION`은 중복을 제거하고 `UNION ALL` 은 중복을 포함함
+  * `UNION` 은 실제로는 `UNION DISTINCT` 의 축약 표현임
+
+
+
+## SQL 프로그래밍
+
+* 프로시져 등에 활용하는 SQL 프로그래밍을 다루는 장.
+* 가볍게 읽고 넘어감. 레거시로 개발된 프로시져를 고쳐야할 때나 공부하면 된다고 봄.
+
+> 생각거리 : 프로시져를 써야할까?
+>
+>   여전히 쓰는 경우가 있겠으나 지양하는게 맞다고 봄. 이유는 DB는 WAS 대비 더 비싼 자원이고 스케일아웃이 힘듬. 따라서 스케일아웃이 용이한 WAS 단에 비즈니스 로직을 두고 DB에서는 단순 데이터관리만 하는게 좋다고 봄. 이를 통해 DBMS에 대한 종속성을 낮추는 효과도 있음. 또한 프로시져는 상대적으로 로깅이나 디버깅이 힘들다는 문제도 존재함.
+>
+>   또 프로시져를 쓰면 앱단에서는 뜬금없이 call any_complex_procedure(); 이런식의 호출이 등장하게 되는데 이러면 비즈니스 로직이 앱과 dbms 단으로 분산되서 전체 파악이 힘들어지는 문제도 존재함. mybatis 를 써도 그렇지만 orm 을 활용하는경우라면 더욱 더.
+
+### 동적 SQL
+
+* 자바의 PreparedStatement 처럼 SQL 을 동적으로 세팅하여 실행할 수 있음
+
+```sql
+SET @current = now();
+-- 이름대로 동적쿼리를 준비만 함
+PREPARE myQuery FROM 'SELECT ?';
+-- 준비한 동적쿼리 실행
+EXECUTE myQuery USING @current;
+-- 생성한 동적쿼리를 해제
+DEALLOCATE PREPARE myQuery;
+
+-- LIMIT 절에는 유저정의변수가 올 수 없는데 동적 쿼리를 이용하면 가능함
+SET @limit = 5;
+
+-- ERROR!
+-- SELECT * FROM usertbl LIMIT @limit;
+
+PREPARE limitQuery FROM 'SELECT * FROM usertbl LIMIT ?';
+EXECUTE limitQuery USING @limit;
+DEALLOCATE PREPARE limitQuery;
+```
+
+# Chap08 테이블과 뷰
+
