@@ -527,6 +527,12 @@ SHOW KEYS FROM userTbl;
 
 
 
+> 생각거리 : 기본키로 자연키 vs 인공키
+>
+>   이것도 위와 동일. 비즈니스 요구사항에 독립적인 인공키를 사용하자.
+
+
+
 ### 외래키 제약조건
 
 * FK 업데이트, 삭제시의 동작을 정의하는 reference_option 에는 RESTRICT (= NO ACTION), CASCADE, SET NULL, SET DEFAULT 가 있음
@@ -677,6 +683,7 @@ SHOW INDEX FROM TBL1;
 * ALTER TABLE 로 생성
 * CREATE INDEX 로 생성
 * 이미 운영중인 테이블에 인덱스를 생성하는 경우 데이터양에 따라 많은 시간이 소요될 수 있으므로 운영시간에 작업에는 주의가 필요함. 개발환경에서 충분히 테스트를 수행하고 생성계획을 수립해야함.
+* 여러 열을 조합해서 인덱스를 생성하는 것도 가능
 
 
 
@@ -687,6 +694,11 @@ SHOW INDEX FROM TBL1;
   * 다른 데이터 구조도 있으나 기본은 B-Tree
 
 * mariadb의 최소 저장 단위인 page (기본값 16KB) 를 node로 하여  tree구조를 생성하게 되며, 이를 통해 전체 검색대비 훨씬 빠르게 데이터를 검색할 수 있는 것.
+
+  ```sql
+  -- page size
+  show variables like 'innodb_page_size';
+  ```
 
 * 반면에 변경 작업(DML)이 발생할 경우 리스트처럼 단순히 append하고 끝이아니라 tree 구조에 변경이 발생하므로 (페이지 분할) DML, 특히 insert 때 성능 저하가 발생함.
 
@@ -760,33 +772,93 @@ create index idx_usertbl_addr on usertbl(addr);
   * https://dba.stackexchange.com/questions/56416/is-analyze-useful-immediately-after-creating-an-innodb-index 에 따르면 굳이 돌리지 않아도 통계치가 반영되는 것으로 보임. 단, 실행계획이 이상한 경우 돌려보는 건 의미가 있다고 함.
 
 ```sql
-analyze table usertbl;
+-- 반복하면 할 때마다 rows 열의 결과가 달라짐. 다른 열도 그럴 수 있을 듯.
+-- innodb는 추정치는 이용하기 때문임.
+analyze table employees;
+
+show table status like 'employees';
+show index from employees;
 ```
 
 
 
 ## 인덱스 성능 비교
 
-* TBD
-
-
-
-
-
-> 인덱스를 어느 열에 지정할까?
->
->   인덱스를 위한 B-Tree 구성을 생각하면 우선 클러스터형 인덱스를 담당할 PK는 정수형이 성능면에서 적절함. 트리 구조를 유지하기 위한 저장공간, 순서를 얻기 위한 연산을 고려한 것임. 흔히 쓰이는 UUID 같은 string은 아무래도 용량이 더 클 수 밖에 없고 비교 연산에서도 정수형보다는 느리기 때문임. 물론 실제로는 성능만 보고 결정하는 것은 아니므로 목적에 맞는 결정이 필요함.
->
->   보조 인덱스의 경우는 카디널리티가 충분히 큰 열이 좋음. 예를 들면 값이 Y 또는 N인 열에 인덱스를 지정해봤자 쓸데없이 공간만 차지할 뿐 성능상 이득을 볼 수 없기 때문임. 이런 경우는 실행 계획을 봐도 mariadb가 그냥 index를 안 써버림.
-
-
+* 보조 인덱스를 이용해 범위 검색을 할 경우 옵티마이저가 판단하기에 전체 데이터의 몇 % 이상을 스캔해야하는 경우 인덱스를 사용하지 않고 전체 검색을 실시할 수 있음
+  * 몇 %인지는 상황마다 다를 수 있음
+  * 예를 들어 1만건있는데 `emp_no < 5000` 이라고 하면 절반 가량을 얻어야하므로 옵티마이저가 인덱스를 사용하지 않을 수 있음. 왜냐하면 보조 인덱스의 구조상 리프페이지 도달 후 여기저기 퍼져있는 데이터 페이지를 읽어와야하는데 이러느니 바로 데이터 페이지 전체 탐색하는게 빠를 수 있기 때문임.
 
 ```sql
--- page size
-show variables like 'innodb_page_size';
+select * from employees;
+-- birth_date 는 date 타입이며 골고루 퍼져있다고 할 때
+create index idx_birth_date on employees(birth_date);
+-- 해당건이 너무 많아 전체 탐색을 수행
+explain select * from employees where birth_date > '1900-09-02';
+-- 생성한 key로 range 탐색
+explain select * from employees where birth_date > '2000-09-02';
+
+-- 반면 PK는 클러스터형 인덱스로서 이미 정렬되어 있으므로
+-- 모든 데이터가 해당되게 조건을 줘도 range 탐색함
+explain select * from employees where emp_no > 10000;
+```
+
+* 인덱스를 태울 열에 연산을 가하면 안 됨
+
+```sql
+-- 인덱스가 지정된 열에 연산을 하면 인덱스를 안 탐
+explain select * from employees where emp_no * 2 > 10000;
+```
+
+* 데이터의 중복도가 낮은 열에 인덱스를 지정해야 효율이 큼
+  * 중복도가 낮으면 카디널리티는 높다고 표현하고, 중복도가 높으면 카디널리티가 낮다고 표현함.
+  * 즉, 카디널리티는 전체 행에 대한 특정 컬럼의 중복 수치를 나타내는 지표임
+  * 예를 들어 gender 열에 인덱스를 지정했고 값이 M, F 둘 중에 하나라면 카디널리티는 2로 매우 낮은 것임.
+  * 반면 PK는 당연히 중복없이 행의 개수만큼 분포되어 있으므로 카니널리티가 매우 높음.
+  * 되도록 카디널리티가 높은 열에 인덱스를 지정해야하며 낮은 열에 지정할 경우에는 trade-off를 고려하여 확실하게 효용이 있다고 판단되는 경우에 지정해야함.
+
+```sql
+-- Cardinality 등의 인덱스 정보 확인
+create index idx_gender on employees(gender);
+
+-- 각 index의 카디널리티 비교
+-- PK인 emp_no 299246
+-- birth_date는 9653
+-- gender는 2
+show index from employees;
+
+-- 인덱스를 타긴 했으나 30만건 중 17만건이 검색됨
+-- 이 인덱스는 불필요하게 용량을 차지하고 insert의 성능을 낮출 뿐
+-- 효용이 낮다고 볼 수 있음
+explain select * from employees where gender = 'M';
 ```
 
 
+
+## 인덱스 생성 팁
+
+* 검색 조건으로 자주 사용되는 열
+* 카디널리티가 높은 열
+* JOIN 에 자주 사용되는 열
+* 외래키를 사용하면 외래키 인덱스가 자동 생성됨
+* unique 지정한 열도 인덱스가 자동 생성됨 
+  * 원래 `unique key`의 축약표현임.
+* 인덱스는 select 의 성능을 향상시키기 위한 것이며 dml 의 경우에는 인덱스 구조를 유지하기 위해 성능이 낮아짐에 주의
+  * 데이터 변경이 거의 없고 select만 자주한다면 index를 적극 활용할 수 있고
+  * 반대라면 index를 신중히 사용해야함
+* 사용하지 않는 인덱스라면 필요여부를 체크하고 삭제하자 (운영중에 하지 말고!)
+* 운영중인 DB에 함부로 인덱스 변경 DDL 을 날리지 말자
+
+
+
+> 내 생각 : PK 열 INT vs VARCHAR
+>
+>   이것도 나름 논쟁거리. 구글링해보면 많은 토론을 볼 수 있음. 성능면에서 유의미한 차이가 없다는 의견도 있고 차이가 난다는 말도 있음. 내 생각은 auto increment int가 보편적으로 좋다고 생각함
+>
+>   먼저 용량면에서 int 형이 당연히 유리함. 보조 인덱스까지 생각하면 더욱 더 그럼.
+>
+>   B-Tree의 생성 및 관리 로직상 빈번하게 비교연산이 발생하는데 당연히 string 연산보다 int 연산이 빠름. 이건 cpu 레벨에서 당연한 이야기. 12345678과 12345679는 매우 빠르게 비교할 수 있지만 ABCDEFGH, ABCDEFGI 비교는 상대적으로 어려움.
+>
+>   또한 PK로 인공키가 권장됨을 고려하면 더욱더 int 형을 사용하는게 자연스러워보임. 물론 인공키의 경우라면 varchar를 사용하고 애플리케이션레벨에서 UUID등의 PK를 생성하는 형태도 생각해볼 수 있긴 함. 근데 이 점의 경우 JPA 같은 ORM을 사용할 경우까지 고려하면 Long 타입에 PK 걸고 Auto Increment 를 걸어버리게 편하지 싶음. 
 
 
 
