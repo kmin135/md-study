@@ -6,8 +6,8 @@
 
 # 기본소감
 
-* DBMS를 처음접하는 초보자용으로 작성된 책임
-* 필요한 부분만 편집해서 정리함
+* 초보용 책이지만 전체적인 개념을 다시 잡을 수 있어서 좋았음
+* 단순히 책만 정리한 것은 아니고 mariadb 공식문서, 연관된 주제에 대한 여러 생각거리도 정리했음 (FK 사용, PK를 무엇으로 할지 등)
 
 # 실습환경구성
 
@@ -908,13 +908,142 @@ explain select * from employees where gender = 'M';
 
 
 
-# Chap11 전체 텍스트 검색과 파티션
+# Chap11 전체 텍스트 검색
 
 * TBD
 
-* 정리 참고
-  * https://nesoy.github.io/articles/2018-05/Database-Shard
-  * https://nesoy.github.io/articles/2018-02/Database-Partitioning
+
+
+# Chap11-2 파티셔닝
+
+* 파티셔닝 : 매우 큰 테이블을 물리적으로 여러 개의 파일로 쪼개서 저장하는 것
+* 매우 큰 테이블은 최적화된 쿼리를 사용해도 느릴 수 있는데 파티셔닝을 적용하여 쿼리가 특정 파티셔닝만 접근하도록 하면 성능을 높일 수 있음
+  * 예를 들어 10억건을 가진 테이블을 1억건씩 쪼개서 10개 파티션으로 저장한 뒤 쿼리가 그 중에서 일부의 파티션만 조회하도록 작성한다면 더 높은 성능을 가질 수 있다는 식임.
+* 파티션을 나눠도 사용자 입장에서는 하나의 테이블로서 접근하여 사용할 수 있음. 물론 최대한 적은 파티션을 사용하도록 쿼리를 작성하는 노력이 필요함.
+* 각 파티션은 서로 다른 종류의 스토리지에 저장하는 것도 가능함.
+  * 접근할 일이 적은 파티션은 저렴한 스토리지에, 빈번한 접근이 발생하는 파티션은 빠른 스토리지에 저장하는 식의 비용절감도 고려할 수 있음.
+  * 또 1개 스토리지가 가질 수 있는 최대 용량은 한계가 있는데 이를 극복하기 위한 방법이 될 수 있음.
+  * https://mariadb.com/kb/en/partitions-files/
+* PK 지정 등 일반 테이블과는 다른 제약조건들이 있기 때문에 관리방법을 숙지하고 사용해야함
+
+
+
+## 파티셔닝 특화 엔진
+
+* SPIDER
+  * 특정 테이블의 파티션을 별도의 서버에 나눠서 저장할 수 있음. 즉 스토리지 레벨이 아니라 아예 서버 자체를 분리할 수 있음.
+  * 동일 머신에서 사용하는 경우에는 상대적으로 더 높은 성능을 제공한다고 함.
+* CONNECT
+  * 파티션들을 서로 다른 스토리지 엔진으로 구성할 수 있음 (InnoDB, MyISAM 등. 심지어 파티셔닝을 제공하지 않는 엔진까지도 구성 가능)
+
+
+
+## 실습
+
+```sql
+# 1971년 미만은 part1
+# 1971년 이상, 2000년 미만은 part2
+# 2000년 이상은 part3
+# 이와 같은 방식을 RANGE 파티셔닝이라 하며 다양한 정책이 있음
+create table parttbl
+(
+    userid    varchar(8)  not null,
+    name      varchar(10) not null,
+    birthyear int         not null,
+    addr      varchar(2)  not null
+)
+partition by range(birthyear)
+(
+    partition part1 values less than (1971),
+    partition part2 values less than (2000),
+    partition part3 values less than MAXVALUE
+);
+
+-- 테이블의 파티션 정보 확인
+select *
+from information_schema.PARTITIONS
+where TABLE_NAME = 'parttbl';
+
+-- sample data insert
+insert into parttbl
+select userid, name, birthYear, addr from usertbl;
+
+-- 파티션 정보를 포함한 실행계획 분석
+-- part1의 조건에 해당하므로 part1 파티션만 조회함을 확인할 수 있음
+explain partitions
+select * from parttbl where birthyear < 1965;
+
+-- 파티션은 추가, 쪼개기, 합치기, 삭제 등이 가능함
+
+-- 파티션 쪼개기
+alter table parttbl reorganize partition part3 into (
+    partition part3 values less than (2010),
+    partition part4 values less than MAXVALUE
+);
+
+-- 파티션 합치기
+alter table parttbl reorganize partition part1, part2 into (
+    partition part12 values less than (2000)
+);
+
+-- 파티션을 제거하면 해당 파티션의 데이터도 함께 제거됨
+-- 특정 파티션의 데이터가 필요없게되면 delete 보다 이와 같이 DDL로 지우는게 빠름
+alter table parttbl drop partition part12;
+```
+
+```bash
+# ls -al datadir
+# 아래와같이 ibd 파일이 분리되어 있음을 볼 수 있음
+-rwxrwxrwx+ 1 999   999    816 Dec 14 22:48  parttbl.frm
+-rwxrwxrwx+ 1 999   999     52 Dec 14 22:48  parttbl.par
+-rwxrwxrwx+ 1 999   999  98304 Dec 14 22:48  parttbl#P#part1.ibd
+-rwxrwxrwx+ 1 999   999  98304 Dec 14 22:48  parttbl#P#part2.ibd
+-rwxrwxrwx+ 1 999   999  98304 Dec 14 22:48  parttbl#P#part3.ibd
+```
+
+* 파티셔닝을 사용하는 테이블의 PK에는 파티셔닝에 사용되는 모든 열이 포함되야함
+* 이는 인덱스에서 살펴본대로 모든 데이터가 PK를 기준으로 정렬되기 때문임. 즉, RANGE 에 지정한 열로 파티션을 나눠야하는데 PK로도 정렬하려니 모순이 생기는 것이고 이 때문에 PK에는 파티셔닝에 사용되는 열이 포함되야하는 것.
+
+```sql
+-- birthyear 을 지우고 생성을 시도하면 에러남
+create table parttbl2
+(
+    userid    varchar(8)  not null,
+    name      varchar(10) not null,
+    birthyear int         not null,
+    addr      varchar(2)  not null,
+    primary key (userid, birthyear)
+)
+partition by range(birthyear)
+(
+    partition part1 values less than (1971),
+    partition part2 values less than (2000),
+    partition part3 values less than MAXVALUE
+);
+```
+
+
+
+## 파티셔닝은 언제 쓸까?
+
+* https://mariadb.com/kb/en/partition-maintenance/
+* 파티셔닝이 무엇이고 적용의 이점을 설명할 수 있을 때 적용해야함
+* 데이터가 백만건은 넘어야 적용을 검토할만 함
+* 즉, 파티셔닝은 처음 설계부터 고려하기 보다는 서비스의 성장과 함께 도입을 검토해야함.
+* 한 번 도입하면 끝이 아니고 서비스의 성장과 축소에 맞춰 파티션도 늘리거나 줄이면서 관리해줘야함
+
+
+
+## 샤딩? 파티셔닝?
+
+* 지금까지 위에서 살펴본 파티셔닝은 수평 파티셔닝이라 부르는데 샤딩도 같은 말임. 즉, 테이블 데이터를 위 아래로 잘라서 쪼갠다는 말임.
+  * 구체적으로는 위의 실습처럼 파일레벨에서 쪼개는 방법도 있고 DB 인스턴스 레벨에서 쪼개는 것도 가능함 (CONNECT 엔진 등)
+  * 단순히 IO 부하만 분산할지 VM 레벨에서 워크로드를 분산할지 목적에 따라 구성해야함.
+
+* 반면 수직 파티셔닝은 말 그대로 테이블을 수직으로 쪼개는 것임.
+  * 정규화와 차이점은 이미 정규화되었는지 여부와 별개로 성능, 공간상의 이슈로 쪼갠다는 점임.
+  * 예를 들어 `id, name, addr` 열을 가진 테이블을 `id, name`, `id, addr` 와 같이 두 개의 테이블로 쪼개는 케이스를 생각할 수 있음.
+  * 자주 사용되는 특정 칼럼을 분리시킬 때 고려할 수 있음.
 
 
 
