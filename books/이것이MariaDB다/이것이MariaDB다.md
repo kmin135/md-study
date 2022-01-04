@@ -908,9 +908,132 @@ explain select * from employees where gender = 'M';
 
 
 
-# Chap11 전체 텍스트 검색
+# Chap11-1 전체 텍스트 검색
 
-* TBD
+* 전체 텍스트 인덱스 (이하 FTI) : 텍스트 타입에 대해 텍스트 전체에 인덱스를 거는 것이 아니라 텍스트를 단어로 쪼개어 인덱스를 생성하여 텍스트 검색 속도를 높여줌.
+
+```sql
+# description 에 일반 index가 매겨져 있다면 
+# 이건 인덱스를 탐 (남자로 시작하는 텍스트)
+select * from fulltexttbl where description like '남자%'
+# 하지만 텍스트의 모든 위치로 찾는다면 전체 검색을 할 수 밖에 없음
+select * from fulltexttbl where description like '%남자%'
+```
+
+* 위의 상황을 해결하기 위해 전체 텍스트 인덱스를 사용함
+
+---
+
+* 제약사항
+  * char, varchar, text와 같은 텍스트 타입 에만 사용이 가능
+  * 파티셔닝된 테이블은 풀 텍스트 인덱스를 가질 수 없음
+* 팁
+  * 데이터가 많은 경우 풀 텍스트 인덱스를 정의한 뒤 데이터를 넣는 것보다 데이터를 먼저 넣고 풀 텍스트 인덱스를 생성하는 것이 더 빠름.
+
+
+
+## 제외되는 결과들
+
+* 풀 텍스트 인덱스 (이하 FTI) 는 모든 단어에 인덱스를 생성하므로 데이터 크기가 커질 수 밖에 없는데 불필요한 크기 증가를 막기위한 방법들이 있음
+
+### 중지 단어
+
+* 첫번째는 중지 단어로 `이번`, `꼭`, `잘` 같이 검색할 일이 없는 단어들을 미리 인덱스 생성에서 제외시키는 것임
+
+```sql
+-- 기본적으로 a, about, an 등의 영어 중지 단어들이 정의되어 있음
+select * from information_schema.INNODB_FT_DEFAULT_STOPWORD;
+```
+
+### 최소 크기, 최대 크기
+
+* 중지 단어외에도 모든 단어를 다 인덱스로 만드는 게 아니고 최소, 최대 크기가 있음. 이 값 내에 들어오는 단어들만 인덱스로 생성함.
+
+```sql
+-- 기본 3
+show variables like 'innodb_ft_min_token_size';
+-- 기본 84
+show variables like 'innodb_ft_max_token_size';
+
+-- 즉, 기본 상태에서 2글자 이하, 85글자 이상인 단어들은 인덱스 생성되지 않음
+-- 런타임중에는 변경 불가하며 my.cnf 등에 지정한 뒤 재시작해야함
+-- 또한 값을 변경해도 이미 만들어진 인덱스는 갱신되지 않고 다시 만들어야함
+```
+
+
+
+## 검색 타입
+
+* 자연어 검색 : 단어가 정확히 일치하는 것을 검색
+
+```sql
+-- 정확히 '속보'가 일치하는 것을 검색. '속보를', '속보입니다' 는 대상이 아님
+select * from news where match(title) against('속보');
+-- '속보' 또는 '사고' 가 정확히 일치하는 값을 검색
+select * from news where match(title) against('속보 사고');
+```
+
+* 불린 모드 검색 : 다양한 연산자를 통해 부분적으로 맞거나 반대로 특정 단어를 제외하는 등의 복합적인 검색을 제공함
+  * https://mariadb.com/kb/en/full-text-index-overview/#in-boolean-mode
+
+```sql
+-- 속보로 시작하는 모든 단어 (속보, 속보를, 속보가 등 like '속보%' 와 유사)
+select * from news where match(title) against('속보*' in boolean mode);
+
+-- '영화'가 들어간 결과 중 '판타지' 가 꼭 들어가는 것
+select * from fulltexttbl
+where match(description) against('영화 +판타지' in boolean mode);
+
+-- '영화'가 들어간 결과 중 '호러' 를 제외
+select * from fulltexttbl
+where match(description) against('영화 -호러' in boolean mode);
+```
+
+
+
+## 풀 텍스트 인덱스 실습
+
+```sql
+-- 풀 텍스트 인덱스 생성
+create fulltext index idx_full on fulltexttbl(description);
+
+-- '남자' 또는 '여자'가 들어간 모든 결과 검색
+-- match ~ against 구문을 select 하면 얼마나 결과가 잘 매치되는지를 수치로 표시해줌 (1에 가까울수록 잘 매칭되는 결과)
+select * , match(description) against('남자* 여자*' in boolean mode) as 'score'
+    from fulltexttbl
+    where match(description) against('남자* 여자*' in boolean mode);
+    
+-- '남자'가 들어간 영화 중 '여자'가 들어간 영화 제외
+where match(description) against('남자* -여자*' in boolean mode);
+
+-- FTI로 만들어진 단어 확인
+set global innodb_ft_aux_table = 'fulltextdb/fulltexttbl';
+-- doc_count가 몇 번이나 등장한 단어인지를 나타냄
+select * from information_schema.INNODB_FT_INDEX_TABLE;
+
+-- 유저 정의 중지 단어 테이블 생성
+-- 테이블 이름은 자유지만 열 이름은 value 이고 타입은 varchar 여야함.
+create table user_stopword (value varchar(30));
+insert into user_stopword values ('그는'), ('그리고'), ('극에');
+
+-- 생성한 유저 정의 단어 테이블을 중지단어 테이블로 세팅
+set global innodb_ft_server_stopword_table = 'fulltextdb/user_stopword';
+
+-- 세팅해도 이미 만들어진 인덱스는 유지되므로 다시 만들어야함
+-- 다시 FTI로 만들어진 단어들을 확인해보면 중지 단어 테이블에 지정된 단어들이 사라져있음을 알 수 있음
+```
+
+
+
+## 풀 텍스트 인덱스의 사용에 대해
+
+> 내생각 : 
+>
+>   일반적인 웹 사이트라면 게시판 본문 검색에 적용해볼만하다. 다만 기본 인덱스보다 많은 용량을 사용할 것이므로 용량에 대한 고려는 필요하다. 또한 최소 검색 글자수를 잘 정의하는 것도 중요한데 예를 들어 1글자 검색을 요구하는 경우 인덱스의 크기가 커지므로 검색 속도도 떨어지고 용량도 많이 사용하게 될 것이다.
+>
+>   또한 데이터 양이 매우 많아진다면 ElasticSearch와 같은 전문적인 검색 엔진을 사용하는 것이 적절할 것이다. 특히나 MariaDB의 FTI 는 파티셔닝 테이블에는 적용 불가한 제약사항이 있기 때문에 더욱 그렇고 속도 면에서도 ES가 유리할 것이다. 실험은 필요하지만 GB 단위까지는 어떻게 DB에서 해보더라도 TB 이상이라면 ES 등을 사용해야할 것이다.
+>
+>   정리하면 텍스트 검색에 대한 요구사항이 나오면 먼저 DB의 FTI 로 시작하고 서비스의 성장에 따라 데이터의 양이 증가하거나 더 전문적인 검색기능에 대한 요구사항이 나오면 전문 검색 엔진을 도입해야할 것이다.
 
 
 
@@ -1005,7 +1128,7 @@ alter table parttbl drop partition part12;
 * 이는 인덱스에서 살펴본대로 모든 데이터가 PK를 기준으로 정렬되기 때문임. 즉, RANGE 에 지정한 열로 파티션을 나눠야하는데 PK로도 정렬하려니 모순이 생기는 것이고 이 때문에 PK에는 파티셔닝에 사용되는 열이 포함되야하는 것.
 
 ```sql
--- birthyear 을 지우고 생성을 시도하면 에러남
+-- PK에서 birthyear 을 지우고 생성을 시도하면 에러남
 create table parttbl2
 (
     userid    varchar(8)  not null,
