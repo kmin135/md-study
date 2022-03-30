@@ -9,13 +9,24 @@
 
 
 
-## devtools 적용하기
+## livereload
 
-* https://stackoverflow.com/questions/33869606/intellij-15-springboot-devtools-livereload-not-working#answer-63188493
-  * 이 answer로 해야 정적파일까지 깔끔하게 동작한다.
+1. `spring-boot-devtools` 을 추가한다. 추가하면 기본적으로 활성화되므로 application.yml 에서 해줄 작업은 없다.
+1. Settings > Advanced Setting > 'Allow auto-make to start even if ...` 체크
+  * 대충 21년도 이전글을 보면 이상한 고급옵션을 키는글이 나올텐데 21.3부터인가 이 옵션으로 바뀌었다고 함.
+2. Settings > Build, Execution, Deployment > Compiler > 'Build project automatically' 체크
+3. Edit Configuration 의 `On update action`, `On frame deactivation` 을 모두 `Update classes and resources` 로 변경
+  * 이걸 안 하면 5초 정도 걸리던게 거의 1초 이내에 반영되었음.
+
+---
 
 * livereload는 기본 적용되고 chrome에도 확장프로그램 livereload를 설치하고 작업바에서 활성화주면 된다.
-* 이후에는 코드수정 후 주기적으로 자동빌드된 후 브라우저도 자동 리프레시되고 `Ctrl+F10` 으로 빌드하면 즉시 재빌드 후 브라우저도 리프레시된다.
+* 이후에는 코드수정 후 주기적으로 자동빌드된 후 브라우저도 자동 리프레시되고 `Ctrl+F9` 으로 빌드하면 즉시 재빌드 후 브라우저도 리프레시된다.
+  * html만 수정한 경우에도 `Ctrl+F9` 로 빌드를 수행하면 빌드할 게 없으니 작업자체는 바로 끝나면서 html도 바로 갱신되는 효과가 있다.
+  * 아니면 `Ctrl+S` 로 저장해도 되는데 빌드하는것보다 한박자 느리게 반영된다.
+* 참고 : https://stackoverflow.com/questions/33869606/intellij-15-springboot-devtools-livereload-not-working#answer-63188493
+
+
 
 
 
